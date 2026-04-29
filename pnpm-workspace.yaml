@@ -1,0 +1,9 @@
+allowBuilds:
+  '@nestjs/core': true
+  '@scarf/scarf': true
+  '@swc/core': true
+  argon2: true
+  baileys: true
+  mongodb-memory-server: true
+  protobufjs: true
+  sharp: true

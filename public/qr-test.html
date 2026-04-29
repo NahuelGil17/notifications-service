@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp QR Test</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background-color: #f4f4f9; }
+        h1 { color: #333; }
+        #qrcode { margin: 20px; padding: 10px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        #log { width: 80%; height: 200px; border: 1px solid #ccc; border-radius: 4px; overflow-y: auto; padding: 10px; font-family: monospace; font-size: 12px; background: #fff; margin-top: 20px; }
+        .controls { margin-bottom: 20px; display: flex; gap: 10px; }
+        input { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        button { padding: 8px 16px; border: none; border-radius: 4px; background-color: #007bff; color: white; cursor: pointer; }
+        button:hover { background-color: #0056b3; }
+        button#clearBtn { background-color: #dc3545; }
+        button#clearBtn:hover { background-color: #a71d2a; }
+        .status { font-weight: bold; margin-bottom: 10px; padding: 5px 10px; border-radius: 4px; }
+        .connected { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .disconnected { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+    </style>
+</head>
+<body>
+    <h1>WhatsApp QR Test</h1>
+    <div class="controls">
+        <input type="text" id="apiKey" placeholder="Enter X-Api-Key" style="width: 300px;">
+        <button id="connectBtn">Connect SSE</button>
+        <button id="clearBtn">Logout / Clear</button>
+    </div>
+    <div id="status" class="status disconnected">Status: Disconnected</div>
+    <div id="qrcode"></div>
+    <div id="log"></div>
+
+    <script>
+        const apiKeyInput = document.getElementById('apiKey');
+        const connectBtn = document.getElementById('connectBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const statusDiv = document.getElementById('status');
+        const qrDiv = document.getElementById('qrcode');
+        const logDiv = document.getElementById('log');
+
+        let qrCode = null;
+
+        function log(msg) {
+            const p = document.createElement('div');
+            p.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            logDiv.prepend(p);
+            console.log(msg);
+        }
+
+        async function checkStatus() {
+            const apiKey = apiKeyInput.value;
+            if (!apiKey) return;
+            try {
+                const res = await fetch('/auth/whatsapp/status', {
+                    headers: { 'X-Api-Key': apiKey }
+                });
+                if (res.status === 401) {
+                    log('Invalid API Key');
+                    return;
+                }
+                const data = await res.json();
+                if (data.isConnected) {
+                    statusDiv.textContent = 'Status: Connected';
+                    statusDiv.className = 'status connected';
+                    qrDiv.style.display = 'none';
+                } else {
+                    statusDiv.textContent = 'Status: ' + data.status;
+                    statusDiv.className = 'status disconnected';
+                    qrDiv.style.display = 'block';
+                }
+            } catch (err) {
+                log('Error checking status: ' + err.message);
+            }
+        }
+
+        async function connect() {
+            const apiKey = apiKeyInput.value;
+            if (!apiKey) return alert('Please enter API Key');
+
+            if (!qrCode) {
+                qrCode = new QRCode(qrDiv, { width: 256, height: 256 });
+            }
+
+            log('Connecting to SSE...');
+            
+            try {
+                const response = await fetch('/auth/whatsapp/qr', {
+                    headers: { 'X-Api-Key': apiKey }
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.message || 'Failed to connect');
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        log('SSE Stream closed');
+                        break;
+                    }
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data:')) {
+                            try {
+                                const json = JSON.parse(line.replace('data:', '').trim());
+                                if (json.qr) {
+                                    log('New QR code received');
+                                    qrCode.clear();
+                                    qrCode.makeCode(json.qr);
+                                    checkStatus();
+                                }
+                            } catch (e) {
+                                console.error('Error parsing SSE data:', e, line);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                log('SSE Error: ' + err.message);
+            }
+        }
+
+        connectBtn.onclick = connect;
+        clearBtn.onclick = async () => {
+            const apiKey = apiKeyInput.value;
+            if (!apiKey) return alert('Please enter API Key');
+            if (!confirm('Are you sure you want to logout?')) return;
+            try {
+                await fetch('/auth/whatsapp/logout', {
+                    method: 'POST',
+                    headers: { 'X-Api-Key': apiKey }
+                });
+                log('Logout requested');
+                qrCode && qrCode.clear();
+                checkStatus();
+            } catch (err) {
+                log('Logout error: ' + err.message);
+            }
+        };
+
+        // Poll status every 5 seconds
+        setInterval(checkStatus, 5000);
+        
+        // Try initial check if key in localStorage or whatever
+        const savedKey = localStorage.getItem('notifications_api_key');
+        if (savedKey) {
+            apiKeyInput.value = savedKey;
+            checkStatus();
+        }
+
+        apiKeyInput.onchange = () => {
+            localStorage.setItem('notifications_api_key', apiKeyInput.value);
+            checkStatus();
+        };
+    </script>
+</body>
+</html>
