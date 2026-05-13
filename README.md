@@ -85,7 +85,7 @@ Content-Type: application/json
 
 {
   "channel": "whatsapp",
-  "to": "+5491112345678",
+  "to": "+59891234567",
   "message": "Hello from Plus Fit!"
 }
 ```
@@ -103,8 +103,8 @@ file: [notifications.csv]
 CSV Format:
 ```csv
 to,message
-+5491112345678,Message 1
-+5491112345679,Message 2
++59891234567,Message 1
++59891234568,Message 2
 ```
 
 ## Testing

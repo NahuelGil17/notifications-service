@@ -83,7 +83,7 @@ describe('NotificationsService (Integration)', () => {
   });
 
   it('should enqueue notification job with random delay', async () => {
-    const dto = { channel: 'whatsapp', to: '+5491112345678', message: 'Hello' };
+    const dto = { channel: 'whatsapp', to: '+59891234567', message: 'Hello' };
     
     const now = Date.now();
     const result = await service.send(dto, 'corr-123');
@@ -100,13 +100,13 @@ describe('NotificationsService (Integration)', () => {
 
     const job = await jobModel.findById(result.jobId);
     expect(job).toBeDefined();
-    expect(job?.to).toBe('+5491112345678');
+    expect(job?.to).toBe('+59891234567');
     expect(job?.scheduledFor).toEqual(result.scheduledFor);
     expect(mockAgenda.schedule).toHaveBeenCalledWith(result.scheduledFor, 'notifications.dispatch', { jobId: result.jobId });
   });
 
   it('should dispatch notification and log audit', async () => {
-    const dto = { channel: 'whatsapp', to: '+5491112345678', message: 'Hello' };
+    const dto = { channel: 'whatsapp', to: '+59891234567', message: 'Hello' };
     
     const result = await service.dispatch(dto, 'corr-123');
     
@@ -121,21 +121,21 @@ describe('NotificationsService (Integration)', () => {
     const audit = await auditLogModel.findOne({ correlationId: 'corr-123' });
     expect(audit).toBeDefined();
     expect(audit?.status).toBe('success');
-    expect(audit?.to).toBe('**********5678'); // Masked
+    expect(audit?.to).toBe('********4567'); // Masked
   });
 
   it('should throw 429 if daily cap is reached', async () => {
     const today = new Date().toISOString().split('T')[0];
     await dailyCapModel.create({ day: today, count: 5 });
 
-    const dto = { channel: 'whatsapp', to: '+5491112345678', message: 'Hello' };
+    const dto = { channel: 'whatsapp', to: '+59891234567', message: 'Hello' };
     
     await expect(service.dispatch(dto)).rejects.toThrow('Daily message cap reached');
   });
 
   it('should log failure if channel send fails', async () => {
     mockChannel.send.mockRejectedValueOnce(new Error('Provider Error'));
-    const dto = { channel: 'whatsapp', to: '+5491112345678', message: 'Hello' };
+    const dto = { channel: 'whatsapp', to: '+59891234567', message: 'Hello' };
     
     await expect(service.dispatch(dto, 'corr-fail')).rejects.toThrow('Provider Error');
     

@@ -11,12 +11,12 @@ export class SendNotificationDto {
   channel!: string;
 
   @ApiProperty({ 
-    example: '+5491112345678', 
+    example: '+59891234567', 
     description: 'Recipient phone number in E.164 format' 
   })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+[1-9]\d{1,14}$/, { message: 'Recipient must be in E.164 format (e.g., +549...)' })
+  @Matches(/^\+[1-9]\d{1,14}$/, { message: 'Recipient must be in E.164 format (e.g., +598...)' })
   to!: string;
 
   @ApiProperty({ 

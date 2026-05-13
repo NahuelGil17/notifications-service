@@ -113,14 +113,18 @@ export class NotificationsService {
   }
 
   async mongoTest() {
-    const collections = await this.auditLogModel.db.db.listCollections().toArray();
-    const rawDocs = await this.auditLogModel.db.db.collection('auditlogs').find({}).limit(5).toArray();
+    const db = this.auditLogModel.db.db;
+    if (!db) {
+      return { error: 'Database connection not available' };
+    }
+    const collections = await db.listCollections().toArray();
+    const rawDocs = await db.collection('auditlogs').find({}).limit(5).toArray();
     const modelDocs = await this.auditLogModel.find({}).limit(5).exec();
-    
+
     return {
       dbName: this.auditLogModel.db.name,
       collections: collections.map(c => c.name),
-      rawDocsCountInAuditLogs: await this.auditLogModel.db.db.collection('auditlogs').countDocuments(),
+      rawDocsCountInAuditLogs: await db.collection('auditlogs').countDocuments(),
       sampleRawDocs: rawDocs,
       sampleModelDocs: modelDocs,
     };

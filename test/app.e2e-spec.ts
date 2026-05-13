@@ -44,7 +44,7 @@ describe('App (e2e)', () => {
         url: '/notifications/send',
         payload: {
           channel: 'whatsapp',
-          to: '+5491112345678',
+          to: '+59891234567',
           message: 'Hello',
         },
       })

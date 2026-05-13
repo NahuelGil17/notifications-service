@@ -24,24 +24,24 @@ describe('CsvParserService', () => {
   });
 
   it('should parse a valid CSV', async () => {
-    const csvContent = 'to,message\n+5491112345678,Hello\n+5491112345679,World';
+    const csvContent = 'to,message\n+59891234567,Hello\n+59891234568,World';
     const stream = Readable.from(csvContent);
     
     const rows = await service.parse(stream);
     
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toEqual({ to: '+5491112345678', message: 'Hello' });
+    expect(rows[0]).toEqual({ to: '+59891234567', message: 'Hello' });
   });
 
   it('should throw if columns are missing', async () => {
-    const csvContent = 'to,wrong\n+5491112345678,Hello';
+    const csvContent = 'to,wrong\n+59891234567,Hello';
     const stream = Readable.from(csvContent);
     
     await expect(service.parse(stream)).rejects.toThrow('missing "to" or "message" column');
   });
 
   it('should throw if max rows exceeded', async () => {
-    const csvContent = 'to,message\n' + '+5491112345678,Hello\n'.repeat(501);
+    const csvContent = 'to,message\n' + '+59891234567,Hello\n'.repeat(501);
     const stream = Readable.from(csvContent);
     
     await expect(service.parse(stream)).rejects.toThrow('exceeds maximum of 500 rows');

@@ -1,4 +1,4 @@
-import { parsePhoneNumberWithError } from 'libphonenumber-js';
+import { parsePhoneNumberWithError, isValidPhoneNumber } from 'libphonenumber-js';
 
 export class PhoneUtil {
   /**
@@ -7,7 +7,7 @@ export class PhoneUtil {
    */
   static normalize(phone: string): string {
     try {
-      const phoneNumber = parsePhoneNumberWithError(phone, 'AR'); // Default to AR if no prefix
+      const phoneNumber = parsePhoneNumberWithError(phone, 'UY'); // Default to UY if no prefix
       return phoneNumber.format('E.164');
     } catch (error) {
       throw new Error(`Invalid phone number: ${phone}`);
@@ -15,8 +15,17 @@ export class PhoneUtil {
   }
 
   /**
+   * Returns true if the phone number is valid for default country UY.
+   * Never throws. Returns false for null, undefined, or invalid strings.
+   */
+  static isValid(phone: string): boolean {
+    if (!phone) return false;
+    return isValidPhoneNumber(phone, 'UY');
+  }
+
+  /**
    * Masks a phone number showing only the last 4 digits.
-   * Example: +5491112345678 -> +***********5678
+   * Example: +59891234567 -> ********4567
    */
   static mask(phone: string): string {
     if (!phone) return '';
