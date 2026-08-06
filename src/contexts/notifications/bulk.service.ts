@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Agenda } from 'agenda';
@@ -63,6 +63,67 @@ export class BulkService {
     return {
       batchId: batch._id,
       total: rows.length,
+    };
+  }
+
+  /**
+   * File-less bulk send: same Batch/Job/Agenda pipeline as the CSV path, fed
+   * directly with phones + one message. Jobs are bulk-inserted instead of
+   * created one await at a time — the serial insert is what forced the CSV
+   * flow to cap files at 45 recipients to stay inside the proxy timeout.
+   */
+  async enqueueDirect(to: string[], message: string, apiKeyName: string, correlationId?: string) {
+    const recipients = [...new Set(to)];
+
+    const maxRows = this.configService.get('BULK_MAX_ROWS', { infer: true });
+    if (recipients.length > maxRows) {
+      throw new BadRequestException(`Recipient list exceeds maximum of ${maxRows} rows`);
+    }
+
+    const batch = await this.batchModel.create({
+      fileName: 'direct-send',
+      totalRows: recipients.length,
+      apiKeyName,
+      correlationId,
+      status: BatchStatus.PROCESSING,
+    });
+
+    const delayMin = this.configService.get('DELAY_MIN_MS', { infer: true });
+    const delayMax = this.configService.get('DELAY_MAX_MS', { infer: true });
+
+    // Same anti-burst spacing as the CSV path: cumulative random delays so the
+    // messages trickle out instead of leaving in one blast.
+    const now = Date.now();
+    let cumulativeDelay = 0;
+    const jobDocs = recipients.map((recipient) => {
+      cumulativeDelay += Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
+      return {
+        batchId: batch._id as Types.ObjectId,
+        to: recipient,
+        message,
+        channel: 'whatsapp',
+        status: JobStatus.QUEUED,
+        scheduledFor: new Date(now + cumulativeDelay),
+      };
+    });
+
+    const jobs = await this.jobModel.insertMany(jobDocs);
+
+    await Promise.all(
+      jobs.map((job) =>
+        this.agenda.schedule(job.scheduledFor, 'notifications.dispatch', {
+          jobId: job._id.toString(),
+        }),
+      ),
+    );
+
+    this.logger.log(
+      `Direct batch ${batch._id} enqueued: ${recipients.length} recipients over ${cumulativeDelay}ms`,
+    );
+
+    return {
+      batchId: batch._id,
+      total: recipients.length,
     };
   }
 

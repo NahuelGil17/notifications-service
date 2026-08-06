@@ -1,9 +1,10 @@
-import { Controller, Post, Get, Body, Param, UseGuards, Headers, Request, Query, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, UseGuards, Headers, Request, Query, BadRequestException, UnauthorizedException, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiHeader, ApiResponse, ApiConsumes, ApiBody, ApiQuery } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { BulkService } from './bulk.service';
 import { CsvParserService } from './csv-parser.service';
 import { SendNotificationDto } from './dtos/send.dto';
+import { BulkDirectDto } from './dtos/bulk-direct.dto';
 import { ApiKeyGuard } from '../api-keys/api-key.guard';
 import { FastifyRequest } from 'fastify';
 import { Readable } from 'stream';
@@ -67,6 +68,20 @@ export class NotificationsController {
       req.apiKey.name,
       correlationId
     );
+  }
+
+  @Post('bulk-direct')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Enqueue a bulk message for a list of recipients (no file)' })
+  @ApiResponse({ status: 202, description: 'Bulk processing started' })
+  async bulkDirect(
+    @Body() dto: BulkDirectDto,
+    @Headers('x-correlation-id') correlationId: string,
+    @Request() req: any,
+  ) {
+    this.checkScopes(req, ['bulk', 'admin']);
+
+    return this.bulkService.enqueueDirect(dto.to, dto.message, req.apiKey.name, correlationId);
   }
 
   @Get('history')
