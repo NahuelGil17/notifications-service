@@ -32,6 +32,17 @@ export class ApiKeyService {
     return { rawKey, keyDoc };
   }
 
+  /**
+   * Replaces the key registered under `name` with a freshly generated one.
+   * `name` is unique, so re-seeding cannot append a second document; deleting
+   * the old one also keeps verify() from argon2-checking dead keys on every
+   * request. The previous raw key stops working immediately.
+   */
+  async rotate(name: string, scopes: string[] = []): Promise<{ rawKey: string; keyDoc: ApiKey }> {
+    await this.apiKeyModel.deleteOne({ name });
+    return this.generate(name, scopes);
+  }
+
   async verify(rawKey: string): Promise<ApiKeyDocument> {
     // This is a naive implementation that checks all enabled keys
     // In production, we might want a cache or a way to identify the key name from the prefix
