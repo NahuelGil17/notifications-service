@@ -40,7 +40,7 @@ describe('NotificationsController.bulkDirect', () => {
     );
   });
 
-  it('enqueues through the service and returns its accepted result', async () => {
+  it('expands the shared-message shape into per-recipient rows', async () => {
     const accepted = { batchId: 'batch-1', total: 2 };
     bulkService.enqueueDirect.mockResolvedValue(accepted);
     const dto = buildDto();
@@ -49,11 +49,23 @@ describe('NotificationsController.bulkDirect', () => {
 
     expect(result).toEqual(accepted);
     expect(bulkService.enqueueDirect).toHaveBeenCalledWith(
-      dto.to,
-      dto.message,
+      dto.to!.map((to) => ({ to, message: dto.message })),
       'gym-backend',
       'corr-9',
     );
+  });
+
+  it('passes personalized items through untouched', async () => {
+    bulkService.enqueueDirect.mockResolvedValue({ batchId: 'b', total: 2 });
+    const items = [
+      { to: '+59891234567', message: 'Hola Ana' },
+      { to: '+59891234568', message: 'Hola Beto' },
+    ];
+    const dto = Object.assign(new BulkDirectDto(), { items });
+
+    await controller.bulkDirect(dto, 'corr-9', requestWithScopes(['bulk']));
+
+    expect(bulkService.enqueueDirect).toHaveBeenCalledWith(items, 'gym-backend', 'corr-9');
   });
 
   it('accepts the admin scope as well', async () => {

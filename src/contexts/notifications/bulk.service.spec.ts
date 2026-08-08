@@ -35,6 +35,10 @@ describe('BulkService.enqueueDirect (Integration)', () => {
     '- Todos vamos por los 7 km',
   ].join('\n');
 
+  /** The shared-message shape, expressed in the per-recipient contract. */
+  const sameMessage = (phones: string[], message: string) =>
+    phones.map((to) => ({ to, message }));
+
   beforeAll(async () => {
     mongod = await MongoMemoryServer.create();
     mongoConnection = (await connect(mongod.getUri())).connection;
@@ -80,8 +84,7 @@ describe('BulkService.enqueueDirect (Integration)', () => {
 
   it('creates a processing batch that the existing status endpoint can track', async () => {
     const result = await service.enqueueDirect(
-      ['+59891234567', '+59891234568'],
-      'Hola',
+      sameMessage(['+59891234567', '+59891234568'], 'Hola'),
       'gym-backend',
       'corr-1',
     );
@@ -99,8 +102,7 @@ describe('BulkService.enqueueDirect (Integration)', () => {
 
   it('creates one queued whatsapp job per recipient, all with the same message', async () => {
     const result = await service.enqueueDirect(
-      ['+59891234567', '+59891234568', '+59891234569'],
-      MULTILINE_MESSAGE,
+      sameMessage(['+59891234567', '+59891234568', '+59891234569'], MULTILINE_MESSAGE),
       'gym-backend',
     );
 
@@ -121,8 +123,7 @@ describe('BulkService.enqueueDirect (Integration)', () => {
 
   it('schedules every job in agenda under the dispatch the worker listens to', async () => {
     const result = await service.enqueueDirect(
-      ['+59891234567', '+59891234568'],
-      'Hola',
+      sameMessage(['+59891234567', '+59891234568'], 'Hola'),
       'gym-backend',
     );
 
@@ -146,8 +147,7 @@ describe('BulkService.enqueueDirect (Integration)', () => {
   it('spaces recipients with cumulative delays like the CSV path', async () => {
     const before = Date.now();
     const result = await service.enqueueDirect(
-      ['+59891234567', '+59891234568', '+59891234569'],
-      'Hola',
+      sameMessage(['+59891234567', '+59891234568', '+59891234569'], 'Hola'),
       'gym-backend',
     );
 
@@ -162,8 +162,7 @@ describe('BulkService.enqueueDirect (Integration)', () => {
 
   it('deduplicates repeated phones so nobody gets the campaign twice', async () => {
     const result = await service.enqueueDirect(
-      ['+59891234567', '+59891234567', '+59891234568'],
-      'Hola',
+      sameMessage(['+59891234567', '+59891234567', '+59891234568'], 'Hola'),
       'gym-backend',
     );
 
@@ -179,13 +178,42 @@ describe('BulkService.enqueueDirect (Integration)', () => {
   it('rejects a list over BULK_MAX_ROWS without creating anything', async () => {
     const to = Array.from({ length: MAX_ROWS + 1 }, (_, i) => `+5989123456${i}`);
 
-    await expect(service.enqueueDirect(to, 'Hola', 'gym-backend')).rejects.toThrow(
+    await expect(service.enqueueDirect(sameMessage(to, 'Hola'), 'gym-backend')).rejects.toThrow(
       `exceeds maximum of ${MAX_ROWS}`,
     );
 
     expect(await batchModel.countDocuments({})).toBe(0);
     expect(await jobModel.countDocuments({})).toBe(0);
     expect(mockAgenda.schedule).not.toHaveBeenCalled();
+  });
+
+  it('keeps each recipient own message, the personalization contract', async () => {
+    const result = await service.enqueueDirect(
+      [
+        { to: '+59891234567', message: 'Hola Ana' },
+        { to: '+59891234568', message: 'Hola Beto' },
+      ],
+      'gym-backend',
+    );
+
+    const jobs = await jobModel.find({ batchId: result.batchId }).sort({ scheduledFor: 1 });
+
+    expect(jobs.map((job) => job.message)).toEqual(['Hola Ana', 'Hola Beto']);
+  });
+
+  it('keeps the first message when a duplicated phone brings a different one', async () => {
+    const result = await service.enqueueDirect(
+      [
+        { to: '+59891234567', message: 'Hola Ana' },
+        { to: '+59891234567', message: 'Hola Ana Clon' },
+      ],
+      'gym-backend',
+    );
+
+    const jobs = await jobModel.find({ batchId: result.batchId });
+
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].message).toBe('Hola Ana');
   });
 
   it('counts the limit against unique recipients, not raw list length', async () => {
@@ -199,7 +227,7 @@ describe('BulkService.enqueueDirect (Integration)', () => {
       '+59891234565',
     ];
 
-    const result = await service.enqueueDirect(to, 'Hola', 'gym-backend');
+    const result = await service.enqueueDirect(sameMessage(to, 'Hola'), 'gym-backend');
 
     expect(result.total).toBe(5);
   });

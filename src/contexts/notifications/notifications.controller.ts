@@ -81,7 +81,12 @@ export class NotificationsController {
   ) {
     this.checkScopes(req, ['bulk', 'admin']);
 
-    return this.bulkService.enqueueDirect(dto.to, dto.message, req.apiKey.name, correlationId);
+    // The DTO guarantees exactly one shape; expand the shared-message one here
+    // so the service only ever sees per-recipient rows.
+    const recipients =
+      dto.items ?? dto.to!.map((to) => ({ to, message: dto.message! }));
+
+    return this.bulkService.enqueueDirect(recipients, req.apiKey.name, correlationId);
   }
 
   @Get('history')

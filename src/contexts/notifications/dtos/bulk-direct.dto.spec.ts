@@ -120,6 +120,77 @@ describe('BulkDirectDto', () => {
   });
 
   /**
+   * Personalized sends: one message per recipient, built by the gym backend
+   * when the campaign template carries {nombre}. XOR with to+message — the
+   * two shapes must not be mixed in one body.
+   */
+  describe('per-recipient items', () => {
+    it('accepts items with a message per recipient and no shared fields', async () => {
+      const errors = await validationErrorsOf({
+        items: [
+          { to: '+59891234567', message: 'Hola Ana' },
+          { to: '+59891234568', message: 'Hola Beto' },
+        ],
+      });
+
+      expect(errors).toHaveLength(0);
+    });
+
+    it('rejects an item whose phone is not E.164', async () => {
+      const errors = await validationErrorsOf({
+        items: [{ to: '099123456', message: 'Hola' }],
+      });
+
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].property).toBe('items');
+    });
+
+    it('rejects an item with a blank message', async () => {
+      const errors = await validationErrorsOf({
+        items: [{ to: '+59891234567', message: '   ' }],
+      });
+
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].property).toBe('items');
+    });
+
+    it('rejects an empty items array', async () => {
+      const errors = await validationErrorsOf({ items: [] });
+
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].property).toBe('items');
+    });
+
+    it('rejects more than 1000 items outright', async () => {
+      const items = Array.from({ length: 1001 }, (_, i) => ({
+        to: `+5989${String(i).padStart(7, '0')}`,
+        message: 'Hola',
+      }));
+
+      const errors = await validationErrorsOf({ items });
+
+      expect(errors.length).toBeGreaterThan(0);
+      expect(errors[0].property).toBe('items');
+    });
+
+    it('rejects a body with neither shape', async () => {
+      const errors = await validationErrorsOf({});
+
+      expect(errors.length).toBeGreaterThan(0);
+    });
+
+    it('rejects a body mixing items with the shared-message shape', async () => {
+      const errors = await validationErrorsOf({
+        items: [{ to: '+59891234567', message: 'Hola Ana' }],
+        to: ['+59891234568'],
+        message: 'Hola',
+      });
+
+      expect(errors.length).toBeGreaterThan(0);
+    });
+  });
+
+  /**
    * Contract fixtures shared with the gym backend, which asserts these exact
    * values in its own bulk-send spec. They are duplicated on purpose: importing
    * across repos is not possible in either test runner, so the boundary is

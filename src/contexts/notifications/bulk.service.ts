@@ -8,6 +8,12 @@ import { Job, JobDocument, JobStatus } from './job.schema';
 import { CsvRow } from './csv-parser.service';
 import { EnvVars } from '../../config/env.validation';
 
+/** One bulk row: a phone and the message that ships to it. */
+export interface BulkRecipient {
+  to: string;
+  message: string;
+}
+
 @Injectable()
 export class BulkService {
   private readonly logger = new Logger(BulkService.name);
@@ -68,21 +74,29 @@ export class BulkService {
 
   /**
    * File-less bulk send: same Batch/Job/Agenda pipeline as the CSV path, fed
-   * directly with phones + one message. Jobs are bulk-inserted instead of
-   * created one await at a time — the serial insert is what forced the CSV
+   * with one row per recipient. Each row carries its own message so the gym
+   * backend can interpolate {nombre} per client; the shared-message shape
+   * arrives already expanded by the controller. Jobs are bulk-inserted instead
+   * of created one await at a time — the serial insert is what forced the CSV
    * flow to cap files at 45 recipients to stay inside the proxy timeout.
    */
-  async enqueueDirect(to: string[], message: string, apiKeyName: string, correlationId?: string) {
-    const recipients = [...new Set(to)];
+  async enqueueDirect(recipients: BulkRecipient[], apiKeyName: string, correlationId?: string) {
+    // First occurrence wins: a phone shared by two clients gets one message.
+    const uniqueByPhone = new Map<string, string>();
+    for (const recipient of recipients) {
+      if (!uniqueByPhone.has(recipient.to)) {
+        uniqueByPhone.set(recipient.to, recipient.message);
+      }
+    }
 
     const maxRows = this.configService.get('BULK_MAX_ROWS', { infer: true });
-    if (recipients.length > maxRows) {
+    if (uniqueByPhone.size > maxRows) {
       throw new BadRequestException(`Recipient list exceeds maximum of ${maxRows} rows`);
     }
 
     const batch = await this.batchModel.create({
       fileName: 'direct-send',
-      totalRows: recipients.length,
+      totalRows: uniqueByPhone.size,
       apiKeyName,
       correlationId,
       status: BatchStatus.PROCESSING,
@@ -95,11 +109,11 @@ export class BulkService {
     // messages trickle out instead of leaving in one blast.
     const now = Date.now();
     let cumulativeDelay = 0;
-    const jobDocs = recipients.map((recipient) => {
+    const jobDocs = [...uniqueByPhone.entries()].map(([to, message]) => {
       cumulativeDelay += Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
       return {
         batchId: batch._id as Types.ObjectId,
-        to: recipient,
+        to,
         message,
         channel: 'whatsapp',
         status: JobStatus.QUEUED,
@@ -118,12 +132,12 @@ export class BulkService {
     );
 
     this.logger.log(
-      `Direct batch ${batch._id} enqueued: ${recipients.length} recipients over ${cumulativeDelay}ms`,
+      `Direct batch ${batch._id} enqueued: ${uniqueByPhone.size} recipients over ${cumulativeDelay}ms`,
     );
 
     return {
       batchId: batch._id,
-      total: recipients.length,
+      total: uniqueByPhone.size,
     };
   }
 
