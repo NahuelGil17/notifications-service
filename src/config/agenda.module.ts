@@ -1,4 +1,4 @@
-import { Module, Global, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Module, Global, Inject, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Agenda } from 'agenda';
 import { MongoBackend } from '@agendajs/mongo-backend';
@@ -27,14 +27,23 @@ import { EnvVars } from './env.validation';
   ],
   exports: ['AGENDA'],
 })
-export class AgendaModule implements OnModuleInit, OnModuleDestroy {
-  constructor(private readonly config: ConfigService) {}
-  
-  async onModuleInit() {
-    // Start logic will be in DispatchProcessor
-  }
+export class AgendaModule implements OnModuleDestroy {
+  private readonly logger = new Logger(AgendaModule.name);
 
+  constructor(@Inject('AGENDA') private readonly agenda: Agenda) {}
+
+  /**
+   * Agenda polls on its own MongoClient, which Nest's shutdown does not close.
+   * Without an explicit stop it keeps claiming jobs while the Mongoose
+   * connection is already closing, and those jobs fail with
+   * "Client must be connected before running operations".
+   */
   async onModuleDestroy() {
-    // Graceful shutdown logic could be added here
+    try {
+      await this.agenda.stop();
+      this.logger.log('Agenda stopped');
+    } catch (error: any) {
+      this.logger.error(`Failed to stop Agenda cleanly: ${error?.message}`);
+    }
   }
 }
