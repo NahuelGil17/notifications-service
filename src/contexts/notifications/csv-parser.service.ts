@@ -23,6 +23,10 @@ export class CsvParserService {
         skip_empty_lines: true,
         trim: true,
         delimiter: [',', ';'],
+        // Excel writes a UTF-8 BOM when it saves a CSV. Without this the first
+        // column is named "﻿to", so every row looks like it is missing the
+        // "to" column and the whole upload is rejected.
+        bom: true,
       })
     );
 
@@ -56,6 +60,9 @@ export class CsvParserService {
       throw new BadRequestException(`Row ${index} has invalid phone format: ${to}`);
     }
 
-    return { to, message };
+    // Windows tools save CSV with CRLF and csv-parse keeps the CR when it sits
+    // inside a quoted field. WhatsApp has no use for a carriage return, so the
+    // message is normalized to LF before it is queued for delivery.
+    return { to, message: String(message).replace(/\r\n?/g, '\n') };
   }
 }
