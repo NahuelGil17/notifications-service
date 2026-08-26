@@ -1,4 +1,4 @@
-import { Injectable, Inject, Logger } from '@nestjs/common';
+import { Injectable, Inject, Logger, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Agenda } from 'agenda';
@@ -7,6 +7,12 @@ import { Batch, BatchDocument, BatchStatus } from './batch.schema';
 import { Job, JobDocument, JobStatus } from './job.schema';
 import { CsvRow } from './csv-parser.service';
 import { EnvVars } from '../../config/env.validation';
+
+/** One bulk row: a phone and the message that ships to it. */
+export interface BulkRecipient {
+  to: string;
+  message: string;
+}
 
 @Injectable()
 export class BulkService {
@@ -63,6 +69,75 @@ export class BulkService {
     return {
       batchId: batch._id,
       total: rows.length,
+    };
+  }
+
+  /**
+   * File-less bulk send: same Batch/Job/Agenda pipeline as the CSV path, fed
+   * with one row per recipient. Each row carries its own message so the gym
+   * backend can interpolate {nombre} per client; the shared-message shape
+   * arrives already expanded by the controller. Jobs are bulk-inserted instead
+   * of created one await at a time — the serial insert is what forced the CSV
+   * flow to cap files at 45 recipients to stay inside the proxy timeout.
+   */
+  async enqueueDirect(recipients: BulkRecipient[], apiKeyName: string, correlationId?: string) {
+    // First occurrence wins: a phone shared by two clients gets one message.
+    const uniqueByPhone = new Map<string, string>();
+    for (const recipient of recipients) {
+      if (!uniqueByPhone.has(recipient.to)) {
+        uniqueByPhone.set(recipient.to, recipient.message);
+      }
+    }
+
+    const maxRows = this.configService.get('BULK_MAX_ROWS', { infer: true });
+    if (uniqueByPhone.size > maxRows) {
+      throw new BadRequestException(`Recipient list exceeds maximum of ${maxRows} rows`);
+    }
+
+    const batch = await this.batchModel.create({
+      fileName: 'direct-send',
+      totalRows: uniqueByPhone.size,
+      apiKeyName,
+      correlationId,
+      status: BatchStatus.PROCESSING,
+    });
+
+    const delayMin = this.configService.get('DELAY_MIN_MS', { infer: true });
+    const delayMax = this.configService.get('DELAY_MAX_MS', { infer: true });
+
+    // Same anti-burst spacing as the CSV path: cumulative random delays so the
+    // messages trickle out instead of leaving in one blast.
+    const now = Date.now();
+    let cumulativeDelay = 0;
+    const jobDocs = [...uniqueByPhone.entries()].map(([to, message]) => {
+      cumulativeDelay += Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
+      return {
+        batchId: batch._id as Types.ObjectId,
+        to,
+        message,
+        channel: 'whatsapp',
+        status: JobStatus.QUEUED,
+        scheduledFor: new Date(now + cumulativeDelay),
+      };
+    });
+
+    const jobs = await this.jobModel.insertMany(jobDocs);
+
+    await Promise.all(
+      jobs.map((job) =>
+        this.agenda.schedule(job.scheduledFor, 'notifications.dispatch', {
+          jobId: job._id.toString(),
+        }),
+      ),
+    );
+
+    this.logger.log(
+      `Direct batch ${batch._id} enqueued: ${uniqueByPhone.size} recipients over ${cumulativeDelay}ms`,
+    );
+
+    return {
+      batchId: batch._id,
+      total: uniqueByPhone.size,
     };
   }
 

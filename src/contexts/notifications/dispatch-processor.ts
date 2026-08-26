@@ -10,6 +10,9 @@ import { Batch, BatchDocument, BatchStatus } from './batch.schema';
 export class DispatchProcessor implements OnModuleInit {
   private readonly logger = new Logger(DispatchProcessor.name);
 
+  private static readonly MAX_LOAD_ATTEMPTS = 3;
+  private static readonly RETRY_BACKOFF_MS = 60000;
+
   constructor(
     @Inject('AGENDA') private agenda: Agenda,
     @InjectModel(Job.name) private jobModel: Model<JobDocument>,
@@ -19,18 +22,37 @@ export class DispatchProcessor implements OnModuleInit {
 
   onModuleInit() {
     this.agenda.define('notifications.dispatch', async (agendaJob: AgendaJob) => {
-      const data = agendaJob.attrs.data as { jobId: string };
+      const data = agendaJob.attrs.data as { jobId: string; attempt?: number };
       const jobId = data?.jobId;
       if (jobId) {
-        await this.processJob(jobId);
+        await this.processJob(jobId, data.attempt ?? 0);
       }
     }, { concurrency: 1 });
+
+    // Agenda stores failReason in Mongo but says nothing otherwise, so a job
+    // that dies before touching its Job document used to fail in total silence.
+    this.agenda.on('fail', (error: Error, agendaJob: AgendaJob) => {
+      this.logger.error(
+        `Agenda job "${agendaJob.attrs.name}" failed (data: ${JSON.stringify(agendaJob.attrs.data)}): ${error?.message}`,
+      );
+    });
 
     this.agenda.start().then(() => this.logger.log('Agenda processor started'));
   }
 
-  private async processJob(jobId: string) {
-    const job = await this.jobModel.findById(jobId);
+  private async processJob(jobId: string, attempt: number) {
+    let job: JobDocument | null;
+
+    try {
+      job = await this.jobModel.findById(jobId);
+    } catch (error: any) {
+      // The Job document is unreachable, so it stays QUEUED and its Batch stays
+      // PROCESSING. Agenda leaves nextRunAt null on failure, so without an
+      // explicit reschedule the batch would sit unfinished forever.
+      await this.scheduleRetry(jobId, attempt, error);
+      throw error;
+    }
+
     if (!job || job.status !== JobStatus.QUEUED) return;
 
     this.logger.log(`Processing job ${jobId} for ${job.to}. (Scheduled for: ${job.scheduledFor.toISOString()})`);
@@ -71,6 +93,27 @@ export class DispatchProcessor implements OnModuleInit {
         }
       }
     }
+  }
+
+  private async scheduleRetry(jobId: string, attempt: number, error: Error) {
+    if (attempt >= DispatchProcessor.MAX_LOAD_ATTEMPTS) {
+      this.logger.error(
+        `Giving up on job ${jobId} after ${attempt} load attempts: ${error?.message}`,
+      );
+      return;
+    }
+
+    const nextAttempt = attempt + 1;
+    const runAt = new Date(Date.now() + nextAttempt * DispatchProcessor.RETRY_BACKOFF_MS);
+
+    this.logger.warn(
+      `Could not load job ${jobId} (${error?.message}). Retry ${nextAttempt} at ${runAt.toISOString()}`,
+    );
+
+    await this.agenda.schedule(runAt, 'notifications.dispatch', {
+      jobId,
+      attempt: nextAttempt,
+    });
   }
 
   private async updateBatchProgress(batchId: Types.ObjectId | undefined, result: 'success' | 'failure') {
